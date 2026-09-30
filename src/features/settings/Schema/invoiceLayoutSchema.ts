@@ -239,6 +239,11 @@ export const BUILTIN_SECTIONS = [
   { id: 'attached_documents', name: 'Attached Documents' },
   { id: 'warranty', name: 'Warranty' },
   { id: 'bank_account', name: 'Bank Account' },
+  // The car's condition this visit: the job's drop-off and the inspection
+  // linked to it. Last, as an appendix: the bill first, then the record of
+  // the dents that were already there. Off until a workshop wants it on
+  // every invoice; a single job asks for it from its drop-off tab.
+  { id: 'condition_map', name: 'Vehicle Condition' },
   // Above the footer, where a signature goes on paper. Off until a workshop
   // switches it on, so no sheet gains a signature line by a deploy.
   { id: 'signature', name: 'Signature' },
@@ -468,6 +473,12 @@ export const BUILTIN_CONDITION_MAP_FIELDS = [
   { id: 'legend', name: 'Legend' },
   /** Marks still open from earlier visits, drawn in grey. */
   { id: 'previous_marks', name: 'Earlier marks' },
+  /**
+   * The empty drawing with the key of kinds and ruled rows, printed when the
+   * job has no marks yet: a form for a walk-round done with a pen. Only the
+   * work order offers it, and only when a workshop switches it on.
+   */
+  { id: 'blank_sheet', name: 'Blank sheet to fill in by hand' },
 ] as const
 
 /** Which rows the full results table prints beyond the defects. */
@@ -550,6 +561,9 @@ export const SECTIONS_WITH_FIELDS = new Set<string>([
   'job_details',
   'condition_map',
 ])
+
+/** Sections with fields of their own that print no workshop-defined fields. */
+export const NO_CUSTOM_FIELD_SECTIONS = new Set<string>(['condition_map'])
 
 /** Sections that print inside a panel and can have it taken away. */
 export const BOXED_ELIGIBLE_SECTIONS = new Set<string>([
@@ -687,7 +701,10 @@ function getDefaultFieldsForSection(
     case 'job_details':
       return BUILTIN_JOB_DETAILS_FIELDS.map((f) => ({ id: f.id, visible: f.id !== 'work_bay' }))
     case 'condition_map':
-      return BUILTIN_CONDITION_MAP_FIELDS.map((f) => ({ id: f.id, visible: true }))
+      return builtinConditionMapFields(documentType).map((f) => ({
+        id: f.id,
+        visible: f.id !== 'blank_sheet',
+      }))
     case 'footer':
       // Only the note and the portal link, which is the footer every existing
       // invoice already has. A work order is not sent, so no portal link.
@@ -738,7 +755,17 @@ const HIDDEN_BY_DEFAULT_SECTIONS = new Set<string>([
   'telegram_qr',
   'items_table',
   'signature',
+  'condition_map',
 ])
+/**
+ * Sections that join a saved invoice or quote design in front of the ones
+ * that close the sheet, rather than after their neighbour in the default
+ * order. The condition map is an appendix: after everything, before the
+ * signing line and the footer.
+ */
+const INSERTS_BEFORE: Record<string, readonly string[]> = {
+  condition_map: ['signature', 'footer'],
+}
 /** A signature line is a choice; most certificates are issued unsigned. */
 const HIDDEN_BY_DEFAULT_CERTIFICATE_SECTIONS = new Set<string>(['slogan', 'signature'])
 /**
@@ -890,9 +917,27 @@ export function withLetterheadMark(
 // Field lookup helpers (for rendering)
 // ---------------------------------------------------------------------------
 
-/** Get all built-in field definitions for a section */
+/**
+ * The condition map's fields on a document. Earlier visits' marks are the
+ * work order's and the certificate's business: an invoice or a quote speaks
+ * about this visit only, so it has no switch for them.
+ */
+function builtinConditionMapFields(
+  documentType: LayoutDocumentType
+): ReadonlyArray<{ id: string; name: string }> {
+  if (documentType === 'work_order') return BUILTIN_CONDITION_MAP_FIELDS
+  // A certificate is a finished record and an invoice a bill: neither is a
+  // form to write on.
+  const printed = BUILTIN_CONDITION_MAP_FIELDS.filter((f) => f.id !== 'blank_sheet')
+  return documentType === 'invoice' || documentType === 'quote'
+    ? printed.filter((f) => f.id !== 'previous_marks')
+    : printed
+}
+
+/** Get all built-in field definitions for a section, on a document of this type. */
 export function getBuiltinFieldsForSection(
-  sectionId: string
+  sectionId: string,
+  documentType: LayoutDocumentType = 'invoice'
 ): ReadonlyArray<{ id: string; name: string }> {
   switch (sectionId) {
     case 'customer':
@@ -922,7 +967,7 @@ export function getBuiltinFieldsForSection(
     case 'job_details':
       return BUILTIN_JOB_DETAILS_FIELDS
     case 'condition_map':
-      return BUILTIN_CONDITION_MAP_FIELDS
+      return builtinConditionMapFields(documentType)
     default:
       return []
   }
@@ -1013,24 +1058,35 @@ export function mergeWithDefaults(saved: Partial<InvoiceLayoutConfig>): InvoiceL
   // Append any new built-in sections that are missing from saved.
   // Insert each after its natural predecessor from the default order,
   // so e.g. "findings" lands after "labor_table" instead of at the end.
+  // An appendix instead goes in front of the sections that close the sheet,
+  // wherever a workshop has put those: the condition map printed after the
+  // signature in a design whose bank details sat below the signing line.
   const defaultOrder = defaults.sections.map((s) => s.id)
-  const toInsert: { section: InvoiceSection; afterIdx: number }[] = []
+  const toInsert: { section: InvoiceSection; afterIdx: number; defaultIdx: number }[] = []
   for (const def of defaults.sections) {
     if (seen.has(def.id)) continue
     const defaultIdx = defaultOrder.indexOf(def.id)
     let insertAfterIdx = -1
-    for (let i = defaultIdx - 1; i >= 0; i--) {
-      const idx = merged.findIndex((s) => s.id === defaultOrder[i])
-      if (idx !== -1) {
-        insertAfterIdx = idx
-        break
+    const closing = documentType === 'invoice' ? INSERTS_BEFORE[def.id] : undefined
+    const closingIdx = closing ? merged.findIndex((s) => closing.includes(s.id)) : -1
+    if (closingIdx !== -1) {
+      insertAfterIdx = closingIdx - 1
+    } else {
+      for (let i = defaultIdx - 1; i >= 0; i--) {
+        const idx = merged.findIndex((s) => s.id === defaultOrder[i])
+        if (idx !== -1) {
+          insertAfterIdx = idx
+          break
+        }
       }
     }
-    toInsert.push({ section: def, afterIdx: insertAfterIdx })
+    toInsert.push({ section: def, afterIdx: insertAfterIdx, defaultIdx })
   }
   if (toInsert.length > 0) {
-    // Insert in reverse so indices stay stable
-    toInsert.sort((a, b) => b.afterIdx - a.afterIdx)
+    // Insert in reverse so indices stay stable. Sections bound for the same
+    // spot go in latest-first too, so they come out in their default order
+    // rather than back to front.
+    toInsert.sort((a, b) => b.afterIdx - a.afterIdx || b.defaultIdx - a.defaultIdx)
     for (const { section, afterIdx } of toInsert) {
       merged.splice(afterIdx + 1, 0, { ...section, order: 0 })
     }

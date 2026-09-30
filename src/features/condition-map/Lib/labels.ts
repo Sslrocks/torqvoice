@@ -1,3 +1,4 @@
+import type { MarkTypeRef } from './markTypes'
 import type { ConditionMapLabels } from './print'
 
 /**
@@ -23,14 +24,23 @@ export async function loadConditionMapMessages(locale: string): Promise<Conditio
   }
 }
 
-export function conditionMapLabelsFrom(messages: ConditionMapMessages): ConditionMapLabels {
+export function conditionMapLabelsFrom(
+  messages: ConditionMapMessages,
+  types?: readonly MarkTypeRef[]
+): ConditionMapLabels {
   return {
     views: messages.views,
     panels: messages.panels,
     kinds: messages.kinds,
     severities: messages.severities,
     previous: messages.print.previous ?? 'recorded earlier',
+    ...(types ? { types } : {}),
   }
+}
+
+/** The built-in kinds' names in a language, for resolving a workshop's catalogue. */
+export async function builtinMarkNames(locale: string): Promise<Record<string, string>> {
+  return (await loadConditionMapMessages(locale)).kinds
 }
 
 export async function loadConditionMapLabels(locale: string): Promise<ConditionMapLabels> {

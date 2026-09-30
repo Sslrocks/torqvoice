@@ -32,6 +32,10 @@ import {
 import type { DocumentSpec } from '../Spec/documentSpec'
 import { warrantyForPrint } from './warrantyPrint'
 import { typeKeyLine } from '@/features/vehicles/Lib/typeKey'
+import {
+  type VisitConditionMap,
+  visitConditionMapForPrint,
+} from '@/features/condition-map/Lib/print'
 
 /**
  * A real job, expressed as the document the designer edits.
@@ -59,6 +63,8 @@ export interface InvoicePrintInput {
   telegramQrDataUri?: string
   telegramLabel?: string
   labels?: Record<string, string>
+  /** The car's condition this visit, for a layout with Vehicle Condition on. */
+  conditionMap?: VisitConditionMap
 }
 
 function fillTemplate(template: string, values: Record<string, string>): string {
@@ -90,6 +96,16 @@ function resolveLayout(input: InvoicePrintInput): InvoiceLayoutConfig {
             ),
           }
         : section
+    )
+  }
+
+  // The design answers for every invoice, the job for this one: a job that
+  // asked for its condition map prints it, one that declined leaves it off,
+  // whatever the design says.
+  const onInvoice = input.conditionMap?.onInvoice
+  if (onInvoice === true || onInvoice === false) {
+    sections = sections.map((section) =>
+      section.id === 'condition_map' ? { ...section, visible: onInvoice } : section
     )
   }
 
@@ -445,6 +461,7 @@ export function buildInvoicePrintSpec(input: InvoicePrintInput): DocumentSpec {
         : undefined,
     }),
     payment,
+    conditionMap: visitConditionMapForPrint(input.conditionMap, doc.margin) ?? undefined,
     telegramQr: input.telegramQrDataUri
       ? {
           dataUri: input.telegramQrDataUri,
@@ -468,6 +485,7 @@ export function buildInvoicePrintSpec(input: InvoicePrintInput): DocumentSpec {
       bank_account: L('paymentInformation', 'Payment Information'),
       general: L('customFieldsTitle', 'Additional Information'),
       findings: L('findings', 'Findings'),
+      condition_map: L('conditionMapTitle', 'Vehicle condition'),
     },
   }
 

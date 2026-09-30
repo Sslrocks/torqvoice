@@ -9,7 +9,10 @@ import { MediaGrid } from './MediaGrid'
 import { PhotoHandoffButton } from '../PhotoHandoffButton'
 import type { ServicePageClientProps } from '../service-page-types'
 import { ConditionMapCard } from '@/features/condition-map/Components/ConditionMapCard'
-import type { ConditionMarkData } from '@/features/condition-map/Lib/marks'
+import { type MarkScope, splitMarks } from '@/features/condition-map/Lib/marks'
+import { setConditionMapOnInvoice } from '@/features/condition-map/Actions/conditionMarkActions'
+import { Checkbox } from '@/components/ui/checkbox'
+import { toast } from 'sonner'
 import { useServiceType } from '@/components/service-type-context'
 
 type FileTab = 'images' | 'dropoff' | 'documents' | 'diagnostics' | 'video' | 'statusReports'
@@ -27,7 +30,7 @@ interface FilesMediaCardProps {
   /** Photos of the car as it arrived. Absent on a page that does not load them. */
   dropoff?: ServicePageClientProps['imageAttachmentsForManager']
   /** The car's condition map, drawn on the drop-off tab. Absent for a counter sale. */
-  conditionMap?: { vehicleId: string; bodyType: string | null; marks: ConditionMarkData[] }
+  conditionMap?: ServicePageClientProps['conditionMap']
   videos: ServicePageClientProps['videoAttachments']
   documents: ServicePageClientProps['documentAttachments']
   maxImages: number
@@ -73,6 +76,32 @@ export function FilesMediaCard({
   const t = useTranslations('service')
   const serviceType = useServiceType()
   const [tab, setTab] = useState<FileTab>(initialTab)
+  // The drop-off is the photos and this visit's marks on the map, the
+  // linked inspection's included; the tab counts both.
+  const mapScope: MarkScope = {
+    serviceRecordId,
+    linkedInspectionId: conditionMap?.linkedInspectionId ?? null,
+  }
+  const [markCount, setMarkCount] = useState(() =>
+    conditionMap ? splitMarks(conditionMap.marks, mapScope).own.length : 0
+  )
+  // Whether this job's invoice prints the map: the job's own answer when it
+  // has given one, else what the design does for every invoice.
+  const [onInvoice, setOnInvoice] = useState<boolean>(
+    conditionMap?.onInvoice ?? conditionMap?.byDesign ?? false
+  )
+  const [savingOnInvoice, setSavingOnInvoice] = useState(false)
+  const toggleOnInvoice = async (next: boolean) => {
+    const before = onInvoice
+    setOnInvoice(next)
+    setSavingOnInvoice(true)
+    const result = await setConditionMapOnInvoice(serviceRecordId, next)
+    setSavingOnInvoice(false)
+    if (!result.success) {
+      setOnInvoice(before)
+      toast.error(result.error || t('modern.media.onInvoiceFailed'))
+    }
+  }
 
   // The page hands over diagnostics and documents as one list, as the classic
   // tab shows them; here each has a tab of its own.
@@ -87,7 +116,11 @@ export function FilesMediaCard({
       count: images.length,
       max: capOf(maxImages),
     },
-    { value: 'dropoff', label: t('modern.media.tabs.dropoff'), count: dropoff.length },
+    {
+      value: 'dropoff',
+      label: t('modern.media.tabs.dropoff'),
+      count: dropoff.length + markCount,
+    },
     {
       value: 'documents',
       label: t('header.tabs.documents'),
@@ -192,10 +225,29 @@ export function FilesMediaCard({
                 <div className="border-b px-5 pt-4 pb-4">
                   <ConditionMapCard
                     vehicle={{ id: conditionMap.vehicleId, bodyType: conditionMap.bodyType }}
-                    scope={{ serviceRecordId }}
+                    scope={mapScope}
+                    types={conditionMap.types}
                     initialMarks={conditionMap.marks}
                     serviceType={serviceType}
+                    onCountChange={(own) => setMarkCount(own)}
                   />
+                  <label className="mt-4 flex items-start gap-2.5 text-sm">
+                    <Checkbox
+                      className="mt-0.5"
+                      checked={onInvoice}
+                      disabled={savingOnInvoice}
+                      onCheckedChange={(checked) => void toggleOnInvoice(checked === true)}
+                      data-testid="condition-map-on-invoice"
+                    />
+                    <span className="min-w-0">
+                      <span className="block font-medium">{t('modern.media.onInvoice')}</span>
+                      <span className="block text-xs text-muted-foreground">
+                        {conditionMap.byDesign
+                          ? t('modern.media.onInvoiceByDesign')
+                          : t('modern.media.onInvoiceHint')}
+                      </span>
+                    </span>
+                  </label>
                 </div>
               )}
               <p className="px-5 pt-4 text-[13px] text-muted-foreground">

@@ -1,4 +1,5 @@
 import type { ConditionMarkData } from '@/features/condition-map/Lib/marks'
+import type { MarkType } from '@/features/condition-map/Lib/markTypes'
 import type { ShopFeeConfig } from '@/features/settings/Lib/shopFee'
 import type { WorkOrderStatusOption } from '@/features/work-order-statuses/Lib/stages'
 import type { WorkOrderLayout } from '@/lib/work-order-layout'
@@ -84,8 +85,22 @@ export interface ServicePageClientProps {
   imageAttachmentsForManager: Attachment[]
   /** Photos of the car as it arrived, kept apart from the job's photos. */
   dropoffAttachments?: Attachment[]
-  /** The vehicle's condition map, for the drop-off card. Absent for a counter sale. */
-  conditionMap?: { vehicleId: string; bodyType: string | null; marks: ConditionMarkData[] }
+  /**
+   * The vehicle's condition map, for the drop-off card. Absent for a counter
+   * sale. The linked inspection's marks count as this visit's.
+   */
+  conditionMap?: {
+    vehicleId: string
+    bodyType: string | null
+    marks: ConditionMarkData[]
+    /** The workshop's kinds of mark, in the reader's language. */
+    types: MarkType[]
+    linkedInspectionId: string | null
+    /** The job's own answer for its invoice, or null to follow the design. */
+    onInvoice: boolean | null
+    /** What the invoice design does for every invoice. */
+    byDesign: boolean
+  }
   videoAttachments: Attachment[]
   documentAttachments: Attachment[]
   maxImagesPerService: number

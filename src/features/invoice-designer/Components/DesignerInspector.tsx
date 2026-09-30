@@ -21,6 +21,8 @@ import {
   fromCustomFieldId,
   getBuiltinFieldName,
   getBuiltinFieldsForSection,
+  layoutDocumentType,
+  NO_CUSTOM_FIELD_SECTIONS,
   unmentionedGrandfathered,
   isCustomFieldId,
   toCustomFieldId,
@@ -422,7 +424,7 @@ export function DesignerInspector({
      * The fields this section shows, resolved the way the generator resolves
      * them: no list of its own means every built-in field, visible.
      */
-    const builtins = getBuiltinFieldsForSection(section.id)
+    const builtins = getBuiltinFieldsForSection(section.id, layoutDocumentType(layout))
     const builtinIds = new Set(builtins.map((f) => f.id))
     const stored = (section.fields ?? builtins.map((f) => ({ id: f.id, visible: true }))) // A stored id no builtin list carries any more is a leftover, not a field.
       .filter((f) => isCustomFieldId(f.id) || builtinIds.has(f.id))
@@ -441,9 +443,11 @@ export function DesignerInspector({
     // Workshop-defined fields wait as chips below the list until they are
     // added, so the list only carries what this section actually uses. The
     // same field can still be added to several sections.
-    const availableCustomFields = customFields.filter(
-      (f) => f.isActive && !stored.some((existing) => existing.id === toCustomFieldId(f.id))
-    )
+    const availableCustomFields = NO_CUSTOM_FIELD_SECTIONS.has(section.id)
+      ? []
+      : customFields.filter(
+          (f) => f.isActive && !stored.some((existing) => existing.id === toCustomFieldId(f.id))
+        )
     // The footer prints its mark only when the field is switched on, and the
     // controls that dress that mark follow it.
     const footerLogoOn = resolvedFields.some((f) => f.id === 'logo' && f.visible)
@@ -532,6 +536,51 @@ export function DesignerInspector({
                 onChange={(variant) => onSection(section.id, { variant })}
               />
               <p className="text-[11.5px] leading-snug text-[#8a8f97]">{t('variant.hint')}</p>
+            </Group>
+          )}
+
+          {section.id === 'condition_map' && (
+            <Group title={t('conditionMapDrawing')}>
+              <div>
+                <div className="mb-1.5 text-[13px] font-medium">{t('conditionMapViews')}</div>
+                <Choice
+                  value={section.variant ?? 'all'}
+                  options={[
+                    { value: 'all', label: t('conditionMapViewsAll') },
+                    { value: 'top', label: t('conditionMapViewsTop') },
+                    { value: 'sides', label: t('conditionMapViewsSides') },
+                  ]}
+                  onChange={(variant) => onSection(section.id, { variant })}
+                />
+              </div>
+              <Row label={t('totalsWidth')}>
+                <input
+                  type="number"
+                  min={140}
+                  max={515}
+                  value={style.width ?? ''}
+                  placeholder={t('auto')}
+                  onChange={(e) =>
+                    setStyle({ width: e.target.value ? Number(e.target.value) : undefined })
+                  }
+                  className="h-7 w-20 rounded-md border border-[#e3e5e9] px-2 text-[12px]"
+                />
+              </Row>
+              <div>
+                <div className="mb-1.5 text-[13px] font-medium">{t('alignment')}</div>
+                <Choice
+                  value={style.align ?? 'left'}
+                  options={[
+                    { value: 'left', label: t('columnLeft') },
+                    { value: 'center', label: t('alignCenter') },
+                    { value: 'right', label: t('columnRight') },
+                  ]}
+                  onChange={(align) => setStyle({ align: align as 'left' | 'center' | 'right' })}
+                />
+              </div>
+              <p className="text-[11.5px] leading-snug text-[#8a8f97]">
+                {t('conditionMapWidthHint')}
+              </p>
             </Group>
           )}
 

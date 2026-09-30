@@ -171,13 +171,15 @@ export function RenderNodePdf({ node, base }: { node: Node; base: TextStyle }): 
 
     case 'drawing':
       // Vector shapes, so the sheet prints crisp; it fills the width it is
-      // given and keeps its aspect, as the height estimate assumes.
+      // given and keeps its aspect, as the height estimate assumes. The box
+      // states its height and never breaks: without the height, react-pdf
+      // squeezed the sheet into a page's remainder rather than moving it.
       return (
         <View wrap={false} style={{ width: '100%', height: node.height }}>
           <Svg
             width="100%"
             height={node.height}
-            viewBox={`0 0 ${node.viewBox[0]} ${node.viewBox[1]}`}
+            viewBox={`0 ${node.viewBoxY ?? 0} ${node.viewBox[0]} ${node.viewBox[1]}`}
             preserveAspectRatio="xMidYMid meet"
           >
             {node.shapes.map((shape, i) => {
@@ -279,9 +281,13 @@ export function RenderNodePdf({ node, base }: { node: Node; base: TextStyle }): 
                   }}
                 />
               ) : null
+            // A row moves to the next page whole. Split, its second half was
+            // laid out without the columns' widths and printed its cells
+            // shifted across the table.
             const body = (
               <View
                 key={`${row[node.columns[0].key]}-${i}`}
+                wrap={false}
                 style={{
                   flexDirection: 'row',
                   alignItems: 'flex-start',

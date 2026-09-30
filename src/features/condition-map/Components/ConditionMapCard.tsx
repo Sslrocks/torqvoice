@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState, useTransition } from 'react'
+import { useEffect, useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { useTranslations } from 'next-intl'
 import { Eraser, Loader2 } from 'lucide-react'
@@ -36,14 +36,17 @@ import {
 import { BODY_TYPES, type BodyType, type View, VIEWS } from '../Lib/drawingTypes'
 import {
   type ConditionMarkData,
-  type MarkKind,
   type MarkScope,
   type MarkSeverity,
   bodyTypeFor,
+  isDrawnOnSheet,
   numberedMarks,
   splitMarks,
 } from '../Lib/marks'
 import { ConditionMap, type MapMark, type MapTap, MarkIcon } from './ConditionMap'
+import { ImageCarousel } from '@/features/vehicles/Components/service-detail/ImageCarousel'
+import type { Attachment } from '@/features/vehicles/Components/service-detail/types'
+import { type MarkType, markTypeOf } from '../Lib/markTypes'
 import { MarkEditor } from './MarkEditor'
 
 /**
@@ -59,6 +62,7 @@ import { MarkEditor } from './MarkEditor'
 export function ConditionMapCard({
   vehicle,
   scope,
+  types,
   initialMarks,
   readOnly = false,
   serviceType = 'automotive',
@@ -67,6 +71,8 @@ export function ConditionMapCard({
 }: {
   vehicle: { id: string; bodyType: string | null }
   scope: MarkScope
+  /** The workshop's kinds of mark, in the reader's language. */
+  types: readonly MarkType[]
   initialMarks: ConditionMarkData[]
   readOnly?: boolean
   serviceType?: 'automotive' | 'marine' | string
@@ -82,12 +88,20 @@ export function ConditionMapCard({
   const [focusView, setFocusView] = useState<View | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [clearingId, setClearingId] = useState<string | null>(null)
+  /** Which of the strip's photos is open full size, if any. */
+  const [viewing, setViewing] = useState<number | null>(null)
   const [pending, startTransition] = useTransition()
 
   const { own, previous } = useMemo(() => splitMarks(marks, scope), [marks, scope])
   const numbered = useMemo(() => numberedMarks([...previous, ...own]), [previous, own])
   const numberOf = useMemo(() => new Map(numbered.map((m, i) => [m.id, i + 1])), [numbered])
   const ownIds = useMemo(() => new Set(own.map((m) => m.id)), [own])
+  // This visit's marks that another sheet holds: the job's linked inspection.
+  // They are drawn in colour with the job's own and changed on the inspection.
+  const elsewhereSheet = useMemo(
+    () => new Set(own.filter((m) => !isDrawnOnSheet(m, scope)).map((m) => m.id)),
+    [own, scope]
+  )
 
   const mapMarks: MapMark[] = numbered
     .filter((m) => m.bodyType === body)
@@ -100,22 +114,23 @@ export function ConditionMapCard({
       severity: m.severity,
       number: numberOf.get(m.id) ?? 0,
       previous: !ownIds.has(m.id),
+      fixed: elsewhereSheet.has(m.id),
     }))
   // Marks drawn on another body type cannot be placed on this drawing; they
   // still count and are still listed.
   const elsewhere = numbered.filter((m) => m.bodyType !== body).length
 
-  const report = (next: ConditionMarkData[]) => {
-    const split = splitMarks(next, scope)
-    onCountChange?.(split.own.length, split.previous.length)
-  }
+  // The host hears the count after a change has been applied, never from
+  // inside a state updater: React runs those during render, and setting the
+  // host's state there is a setState-in-render error.
+  useEffect(() => {
+    onCountChange?.(own.length, previous.length)
+    // The host's callback is the same function each render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [own.length, previous.length])
 
   const replace = (updated: ConditionMarkData) => {
-    setMarks((prev) => {
-      const next = prev.map((m) => (m.id === updated.id ? updated : m))
-      report(next)
-      return next
-    })
+    setMarks((prev) => prev.map((m) => (m.id === updated.id ? updated : m)))
   }
 
   const handleTap = (tap: MapTap) => {
@@ -123,13 +138,17 @@ export function ConditionMapCard({
     startTransition(async () => {
       const result = await addConditionMark({
         vehicleId: vehicle.id,
-        ...scope,
+        // The sheet the mark is drawn on; a linked inspection only lends its marks.
+        ...('inspectionItemId' in scope
+          ? { inspectionId: scope.inspectionId, inspectionItemId: scope.inspectionItemId }
+          : { serviceRecordId: scope.serviceRecordId }),
         bodyType: body,
         view: tap.view,
         panel: tap.panel,
         x: tap.x,
         y: tap.y,
-        kind: 'dent',
+        // The first kind the workshop offers; the editor opens to change it.
+        kind: types.find((type) => !type.hidden)?.key ?? 'dent',
         severity: 'minor',
       })
       if (!result.success || !result.data) {
@@ -137,11 +156,7 @@ export function ConditionMapCard({
         return
       }
       const created = result.data
-      setMarks((prev) => {
-        const next = [...prev, created]
-        report(next)
-        return next
-      })
+      setMarks((prev) => [...prev, created])
       setEditingId(created.id)
     })
   }
@@ -165,7 +180,7 @@ export function ConditionMapCard({
   }
 
   const handleChange = (patch: {
-    kind?: MarkKind
+    kind?: string
     severity?: MarkSeverity
     note?: string | null
   }) => {
@@ -187,11 +202,7 @@ export function ConditionMapCard({
     if (!id) return
     setEditingId(null)
     const before = marks
-    setMarks((prev) => {
-      const next = prev.filter((m) => m.id !== id)
-      report(next)
-      return next
-    })
+    setMarks((prev) => prev.filter((m) => m.id !== id))
     startTransition(async () => {
       const result = await removeConditionMark(id)
       if (!result.success) {
@@ -270,6 +281,32 @@ export function ConditionMapCard({
     })
   }
 
+  // The photos of every mark shown, in legend order, each with its mark's
+  // words, so a walk-round's pictures are read in one place: the desk sees
+  // what the technician saw without opening ten dents.
+  const photos = numbered.flatMap((mark) =>
+    mark.imageUrls.map((url) => {
+      const number = numberOf.get(mark.id) ?? 0
+      const caption = `${number}. ${t('markOn', {
+        kind: markTypeOf(types, mark.kind).name,
+        area: t(`panels.${mark.panel}`),
+      })}${ownIds.has(mark.id) ? '' : ` (${t('previousShort')})`}`
+      return { mark, url, number, caption }
+    })
+  )
+  // The same strip as the viewer shows it: full size, one after another,
+  // each captioned with its mark.
+  const viewerImages: Attachment[] = photos.map(({ mark, url, caption }, index) => ({
+    id: `${mark.id}-${index}`,
+    fileName: caption,
+    fileUrl: url,
+    fileType: 'image/*',
+    fileSize: 0,
+    category: 'image',
+    description: caption,
+    createdAt: new Date(mark.recordedAt),
+  }))
+
   const editing = editingId ? (marks.find((m) => m.id === editingId) ?? null) : null
   const clearing = clearingId ? (marks.find((m) => m.id === clearingId) ?? null) : null
 
@@ -318,6 +355,7 @@ export function ConditionMapCard({
           <ConditionMap
             body={body}
             marks={mapMarks}
+            types={types}
             selectedId={editingId}
             focusView={focusView}
             readOnly={readOnly}
@@ -345,8 +383,10 @@ export function ConditionMapCard({
                     <LegendRow
                       key={mark.id}
                       mark={mark}
+                      types={types}
                       number={numberOf.get(mark.id) ?? 0}
                       previous={false}
+                      fromInspection={elsewhereSheet.has(mark.id)}
                       onOpen={() => setEditingId(mark.id)}
                     />
                   ))}
@@ -367,6 +407,7 @@ export function ConditionMapCard({
                     <LegendRow
                       key={mark.id}
                       mark={mark}
+                      types={types}
                       number={numberOf.get(mark.id) ?? 0}
                       previous
                       onOpen={() => setEditingId(mark.id)}
@@ -382,7 +423,53 @@ export function ConditionMapCard({
         </div>
       </div>
 
+      {/* Every mark's photos in one strip, each saying which mark it belongs
+          to, so nobody opens ten dents to find the one picture they want.
+          A photo opens its mark. */}
+      {photos.length > 0 && (
+        <section aria-label={t('photosHeading')} className="space-y-1.5">
+          <p className="text-xs font-medium text-muted-foreground">
+            {t('photosHeading')} · {t('photoCount', { count: photos.length })}
+          </p>
+          <div className="flex flex-wrap gap-2" data-testid="condition-map-photos">
+            {photos.map(({ mark, url, number, caption }, index) => (
+              <div key={url} className="w-24">
+                <button
+                  type="button"
+                  onClick={() => setViewing(index)}
+                  className="block rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  aria-label={`${t('photosOf', { n: number })}: ${caption}`}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={url} alt="" className="h-24 w-24 rounded-md border object-cover" />
+                </button>
+                {/* The caption opens the mark itself, for the note or a change. */}
+                <button
+                  type="button"
+                  onClick={() => setEditingId(mark.id)}
+                  className={cn(
+                    'mt-1 block w-full truncate text-left text-[11px] leading-tight hover:underline',
+                    !ownIds.has(mark.id) && 'text-muted-foreground'
+                  )}
+                  title={caption}
+                >
+                  {caption}
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <ImageCarousel
+        images={viewerImages}
+        currentIndex={viewing}
+        onClose={() => setViewing(null)}
+        onChangeIndex={setViewing}
+      />
+
       <MarkEditor
+        types={types}
         mark={
           editing
             ? {
@@ -397,7 +484,7 @@ export function ConditionMapCard({
             : null
         }
         open={editing !== null}
-        readOnly={readOnly || (editing ? !ownIds.has(editing.id) : false)}
+        readOnly={readOnly || (editing ? !isDrawnOnSheet(editing, scope) : false)}
         busy={pending}
         onChange={handleChange}
         onRemove={handleRemove}
@@ -457,14 +544,19 @@ function ViewTab({
 
 function LegendRow({
   mark,
+  types,
   number,
   previous,
+  fromInspection = false,
   onOpen,
   onClear,
 }: {
   mark: ConditionMarkData
+  types: readonly MarkType[]
   number: number
   previous: boolean
+  /** Recorded on the inspection linked to this job, and changed there. */
+  fromInspection?: boolean
   onOpen: () => void
   onClear?: () => void
 }) {
@@ -477,12 +569,12 @@ function LegendRow({
         className="flex min-w-0 flex-1 items-start gap-2 rounded text-left hover:bg-muted/60"
         aria-label={t('markLabel', {
           n: number,
-          kind: t(`kinds.${mark.kind}`),
+          kind: markTypeOf(types, mark.kind).name,
           area: t(`panels.${mark.panel}`),
         })}
       >
         <MarkIcon
-          kind={mark.kind as MarkKind}
+          type={markTypeOf(types, mark.kind)}
           severity={mark.severity as MarkSeverity}
           number={number}
           previous={previous}
@@ -491,7 +583,10 @@ function LegendRow({
         />
         <span className="min-w-0 flex-1">
           <span className={cn('block truncate font-medium', previous && 'text-muted-foreground')}>
-            {t('markOn', { kind: t(`kinds.${mark.kind}`), area: t(`panels.${mark.panel}`) })}
+            {t('markOn', {
+              kind: markTypeOf(types, mark.kind).name,
+              area: t(`panels.${mark.panel}`),
+            })}
             {mark.severity === 'major' && (
               <span className="ml-1.5 rounded-full bg-red-600/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-red-700 dark:text-red-300">
                 {t('severities.major')}
@@ -500,6 +595,9 @@ function LegendRow({
           </span>
           {mark.note && (
             <span className="block truncate text-xs text-muted-foreground">{mark.note}</span>
+          )}
+          {fromInspection && (
+            <span className="block text-[11px] text-muted-foreground">{t('fromInspection')}</span>
           )}
           {mark.imageUrls.length > 0 && (
             <span className="block text-[11px] text-muted-foreground">

@@ -38,6 +38,7 @@
   "readOnly": "Reopen to change the condition map.",
   "count": "{count, plural, =0 {No marks} one {# mark} other {# marks}}",
   "previousCount": "{count, plural, one {# from an earlier visit} other {# from earlier visits}}",
+  "fromInspection": "From the linked inspection, changed there",
   "views": {
     "top": "Top",
     "left": "Left side",
@@ -142,5 +143,8 @@
   },
   "elsewhere": "{count, plural, one {# mark was drawn on another body type and is listed on the print only} other {# marks were drawn on another body type and are listed on the print only}}",
   "photoCount": "{count, plural, one {# photo} other {# photos}}",
-  "clearBody": "Mark {n} on the {area} will be recorded as repaired. It stays in the history and stops printing."
+  "clearBody": "Mark {n} on the {area} will be recorded as repaired. It stays in the history and stops printing.",
+  "manageKinds": "Manage kinds",
+  "photosHeading": "Photos",
+  "previousShort": "earlier"
 }
